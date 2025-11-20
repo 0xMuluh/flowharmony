@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: flowharmony-backend
+    env: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: FLOWHARMONY_DEMO_MODE
+        value: "1"

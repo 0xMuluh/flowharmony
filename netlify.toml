@@ -1,0 +1,20 @@
+[build]
+publish = "netlify"
+command = ""
+
+[dev]
+framework = "static"
+
+[[redirects]]
+# Proxy API requests to the hosted Flask backend.
+from = "/api/*"
+to = "https://flowharmony.onrender.com/api/:splat"
+status = 200
+force = true
+
+[[redirects]]
+# Fall back to the hosted backend for any other paths (kitchen, manager, etc.).
+from = "/*"
+to = "https://flowharmony.onrender.com/:splat"
+status = 200
+force = true
