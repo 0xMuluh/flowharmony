@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Line Alerts</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="page-body" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="page-shell alert-shell">
+    <header class="page-header">
+      <div>
+        <h1>Live line alerts</h1>
+        <p>Push these to digital signage when a line exceeds targets.</p>
+      </div>
+      <a class="btn btn-secondary" href="/waittimes?site_id={{ site_id }}">View wait cards</a>
+    </header>
+
+    <section class="alert-board">
+      {% for alert in alerts %}
+      <article class="alert-tile alert-tile--{{ alert.severity }}">
+        <header>
+          <h2>{{ alert.title }}</h2>
+          <p>{{ alert.subtitle }}</p>
+        </header>
+        <p class="alert-tile__details">{{ alert.details }}</p>
+        <button class="btn btn-primary">{{ alert.action_text }}</button>
+      </article>
+      {% endfor %}
+    </section>
+  </div>
+</body>
+</html>

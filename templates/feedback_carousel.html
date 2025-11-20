@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Feedback Carousel</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="feedback-alt-body feedback-carousel-body" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="feedback-carousel-shell">
+    <header class="feedback-carousel-header">
+      <span class="feedback-carousel-tag">Live micro-pulse</span>
+      <h1>How diners feel right now</h1>
+      <p>Every question from the floor, looping in motion so your team stays tuned in.</p>
+    </header>
+    <section class="feedback-carousel">
+      <button class="carousel-nav" id="carousel-prev" aria-label="Previous feedback">‹</button>
+      <div class="carousel-window">
+        <div class="feedback-carousel-track" id="feedback-track">
+          {% for screen in screens %}
+          <article class="feedback-panel feedback-panel--single feedback-carousel-card" data-index="{{ loop.index0 }}">
+            <header class="feedback-panel__header">
+              <span class="feedback-carousel-chip">{{ screen.question_set.title() }}</span>
+              <h2>{{ screen.title }}</h2>
+              <p>{{ screen.prompt }}</p>
+            </header>
+            <ul class="feedback-carousel-options">
+              {% for option in screen.options %}
+              {% set parts = option.label.split(' ', 1) %}
+              <li>
+                <span class="feedback-carousel-emoji">{{ parts[0] }}</span>
+                {% if parts|length > 1 %}
+                <span class="feedback-carousel-text">{{ parts[1] }}</span>
+                {% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+            <footer class="feedback-carousel-footer">
+              <span class="feedback-carousel-meta">Tap-to-vote path · {{ screen.success_text or "Thanks for the signal!" }}</span>
+            </footer>
+          </article>
+          {% endfor %}
+        </div>
+      </div>
+      <button class="carousel-nav" id="carousel-next" aria-label="Next feedback">›</button>
+    </section>
+    <div class="feedback-carousel-dots" id="feedback-dots">
+      {% for screen in screens %}
+      <button class="carousel-dot{% if loop.first %} is-active{% endif %}" data-index="{{ loop.index0 }}" aria-label="Go to {{ screen.title }}"></button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <script>
+    const trackEl = document.getElementById("feedback-track");
+    const slides = Array.from(trackEl.querySelectorAll(".feedback-carousel-card"));
+    const dotsEl = document.getElementById("feedback-dots");
+    const dots = Array.from(dotsEl.querySelectorAll(".carousel-dot"));
+    const prevBtn = document.getElementById("carousel-prev");
+    const nextBtn = document.getElementById("carousel-next");
+    const AUTO_ROTATE_MS = 5200;
+    let activeIndex = 0;
+    let rotationTimer = null;
+
+    function updateCarousel() {
+      const slide = slides[activeIndex];
+      slides.forEach((card, idx) => {
+        card.classList.toggle("is-active", idx === activeIndex);
+      });
+      dots.forEach((dot, idx) => {
+        dot.classList.toggle("is-active", idx === activeIndex);
+      });
+      if (!slide) return;
+      const trackStyle = window.getComputedStyle(trackEl);
+      const gap = parseFloat(trackStyle.columnGap || trackStyle.gap || "0") || 0;
+      const offset = (slide.offsetWidth + gap) * activeIndex;
+      trackEl.style.transform = `translateX(${-offset}px)`;
+    }
+
+    function goTo(index) {
+      if (!slides.length) return;
+      activeIndex = (index + slides.length) % slides.length;
+      updateCarousel();
+      restartRotation();
+    }
+
+    function goNext() {
+      goTo(activeIndex + 1);
+    }
+
+    function goPrevious() {
+      goTo(activeIndex - 1);
+    }
+
+    function restartRotation() {
+      if (rotationTimer) {
+        clearInterval(rotationTimer);
+      }
+      rotationTimer = setInterval(goNext, AUTO_ROTATE_MS);
+    }
+
+    prevBtn.addEventListener("click", () => {
+      goPrevious();
+    });
+
+    nextBtn.addEventListener("click", () => {
+      goNext();
+    });
+
+    dotsEl.addEventListener("click", (event) => {
+      const target = event.target.closest(".carousel-dot");
+      if (!target) return;
+      const idx = Number(target.dataset.index);
+      if (Number.isNaN(idx)) return;
+      goTo(idx);
+    });
+
+    [trackEl, prevBtn, nextBtn].forEach((el) => {
+      if (!el) return;
+      ["mouseenter", "touchstart", "focusin"].forEach((evt) => {
+        el.addEventListener(evt, () => {
+          if (rotationTimer) {
+            clearInterval(rotationTimer);
+            rotationTimer = null;
+          }
+        });
+      });
+      ["mouseleave", "touchend", "focusout"].forEach((evt) => {
+        el.addEventListener(evt, () => {
+          if (!rotationTimer) {
+            restartRotation();
+          }
+        });
+      });
+    });
+
+    updateCarousel();
+    restartRotation();
+  </script>
+</body>
+</html>

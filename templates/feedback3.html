@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – {{ screen.title }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="feedback-alt-body" data-site="{{ site_id }}" data-screen="{{ screen.slug }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="feedback-panel feedback-panel--single">
+    <header class="feedback-panel__header">
+      <span class="feedback-tag">{{ screen.question_set.title() }} pulse</span>
+      <h1>{{ screen.title }}</h1>
+      <p>{{ screen.prompt }}</p>
+    </header>
+    <form
+      id="feedback-form"
+      class="feedback-form emoji-form"
+      data-question-set="{{ screen.question_set }}"
+      data-response-key="{{ screen.response_key }}"
+      data-success-text="{{ screen.success_text }}"
+      data-route-map='{{ route_map|tojson|safe }}'
+      data-rotation='{{ sibling_screens|tojson|safe }}'
+    >
+      <div class="emoji-option-grid">
+        {% for option in screen.options %}
+        {% set parts = option.label.split(' ', 1) %}
+        <label class="emoji-option">
+          <input type="radio" name="{{ screen.response_key }}" value="{{ option.value }}" required>
+          <span class="emoji-option__icon">{{ parts[0] }}</span>
+          {% if parts|length > 1 %}
+          <span class="emoji-option__text">{{ parts[1] }}</span>
+          {% endif %}
+        </label>
+        {% endfor %}
+      </div>
+      <p id="status" class="feedback-status" hidden></p>
+    </form>
+  </div>
+
+  <script>
+    const siteId = document.body.dataset.site || "flavoria";
+    const form = document.getElementById("feedback-form");
+    const statusEl = document.getElementById("status");
+    const responseKey = form.dataset.responseKey;
+    const questionSet = form.dataset.questionSet;
+    const successText = form.dataset.successText;
+    let routeMap = {};
+    let rotationScreens = [];
+    let audioContext = null;
+
+    try {
+      routeMap = JSON.parse(form.dataset.routeMap || "{}");
+    } catch (error) {
+      console.warn("Failed to parse feedback route map", error);
+    }
+
+    try {
+      rotationScreens = JSON.parse(form.dataset.rotation || "[]");
+    } catch (error) {
+      console.warn("Failed to parse rotation payload", error);
+      rotationScreens = [];
+    }
+
+    const searchParams = new URLSearchParams(window.location.search);
+    const embedParam = searchParams.get("embed");
+    const embedSuffix = embedParam ? `&embed=${encodeURIComponent(embedParam)}` : "";
+    const ROTATION_INTERVAL_MS = 4000;
+    const ROTATION_PAUSE_ON_INTERACT_MS = 12000;
+    const ROTATION_AFTER_SELECTION_DELAY = 900;
+    let rotationPausedUntil = Date.now() + ROTATION_INTERVAL_MS;
+    let isSubmitting = false;
+    let resetGuard = false;
+
+    function ensureAudioContext() {
+      if (audioContext) {
+        if (audioContext.state === "suspended") {
+          audioContext.resume().catch(() => {});
+        }
+        return audioContext;
+      }
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) {
+        return null;
+      }
+      audioContext = new Ctx();
+      return audioContext;
+    }
+
+    function playCandyTone() {
+      const ctx = ensureAudioContext();
+      if (!ctx) return;
+      const notes = [659, 784, 988];
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const start = ctx.currentTime + idx * 0.035;
+        const end = start + 0.2;
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.05, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, end);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(start);
+        osc.stop(end);
+      });
+    }
+
+    const pauseRotation = (durationMs = ROTATION_PAUSE_ON_INTERACT_MS) => {
+      rotationPausedUntil = Date.now() + durationMs;
+    };
+
+    const goToNextScreen = () => {
+      if (isSubmitting) {
+        return;
+      }
+      if (!Array.isArray(rotationScreens) || rotationScreens.length < 2) {
+        return;
+      }
+      const currentSlug = document.body.dataset.screen;
+      const currentIndex = rotationScreens.findIndex((entry) => entry.slug === currentSlug);
+      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % rotationScreens.length : 0;
+      const nextScreen = rotationScreens[nextIndex];
+      if (!nextScreen || nextScreen.slug === currentSlug) {
+        return;
+      }
+      const route = routeMap[nextScreen.question_set] || "feedback1";
+      const nextUrl = `/${route}?site_id=${encodeURIComponent(siteId)}&slug=${encodeURIComponent(nextScreen.slug)}${embedSuffix}`;
+      window.location.replace(nextUrl);
+    };
+
+    const scheduleRotation = () => {
+      if (!Array.isArray(rotationScreens) || rotationScreens.length < 2) {
+        return;
+      }
+      setInterval(() => {
+        if (Date.now() < rotationPausedUntil || isSubmitting) {
+          return;
+        }
+        goToNextScreen();
+      }, ROTATION_INTERVAL_MS);
+    };
+
+    scheduleRotation();
+
+    ["mouseenter", "focusin", "touchstart"].forEach((evt) => {
+      form.addEventListener(evt, () => pauseRotation());
+    });
+
+    form.addEventListener("change", (event) => {
+      if (event.target.name === responseKey) {
+        if (resetGuard || !event.target.checked) {
+          return;
+        }
+        statusEl.hidden = true;
+        statusEl.classList.remove("is-error");
+        const optionEl = event.target.closest(".emoji-option");
+        handleSelection(event.target.value, optionEl);
+      }
+    });
+
+    const triggerAnimation = (optionEl) => {
+      if (!optionEl) {
+        return;
+      }
+      optionEl.classList.add("is-animating");
+      setTimeout(() => optionEl.classList.remove("is-animating"), 650);
+    };
+
+    const handleSelection = async (value, optionEl) => {
+      if (isSubmitting) {
+        return;
+      }
+      isSubmitting = true;
+      form.dataset.busy = "true";
+      pauseRotation();
+      triggerAnimation(optionEl);
+      playCandyTone();
+      statusEl.hidden = true;
+      statusEl.classList.remove("is-error");
+      try {
+        const res = await fetch(`/api/feedback_extended?site_id=${encodeURIComponent(siteId)}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            question_set: questionSet,
+            responses: { [responseKey]: value }
+          })
+        });
+        if (!res.ok) {
+          throw new Error("Request failed");
+        }
+        statusEl.textContent = successText || "Captured – thanks!";
+        statusEl.hidden = false;
+        statusEl.classList.remove("is-error");
+        resetGuard = true;
+        form.reset();
+        setTimeout(() => {
+          resetGuard = false;
+        }, 0);
+        if (Array.isArray(rotationScreens) && rotationScreens.length >= 2) {
+          pauseRotation(ROTATION_AFTER_SELECTION_DELAY + 600);
+          setTimeout(() => {
+            goToNextScreen();
+          }, ROTATION_AFTER_SELECTION_DELAY);
+        }
+      } catch (error) {
+        console.error(error);
+        statusEl.textContent = "Network hiccup – please try again.";
+        statusEl.hidden = false;
+        statusEl.classList.add("is-error");
+      } finally {
+        delete form.dataset.busy;
+        isSubmitting = false;
+      }
+    };
+  </script>
+</body>
+</html>

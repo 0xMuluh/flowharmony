@@ -1,0 +1,149 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Lunch Pulse</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="feedback-alt-body" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="feedback-panel feedback-panel--single">
+    <header class="feedback-panel__header">
+      <span class="feedback-tag">Lunch pulse</span>
+      <h1>How was today&apos;s lunch?</h1>
+      <p>Tap once to steer the kitchen vibe.</p>
+    </header>
+    <form id="quick-feedback" class="feedback-form emoji-form" data-success-text="Thanks – message sent!">
+      <div class="emoji-option-grid">
+        <label class="emoji-option">
+          <input type="radio" name="rating" value="3" required>
+          <span class="emoji-option__icon">😋</span>
+          <span class="emoji-option__text">Great</span>
+        </label>
+        <label class="emoji-option">
+          <input type="radio" name="rating" value="2" required>
+          <span class="emoji-option__icon">🙂</span>
+          <span class="emoji-option__text">Okay</span>
+        </label>
+        <label class="emoji-option">
+          <input type="radio" name="rating" value="1" required>
+          <span class="emoji-option__icon">😕</span>
+          <span class="emoji-option__text">Not good</span>
+        </label>
+      </div>
+      <p id="status" class="feedback-status" hidden></p>
+    </form>
+  </div>
+
+  <script>
+    const siteId = document.body.dataset.site || "flavoria";
+    const form = document.getElementById("quick-feedback");
+    const statusEl = document.getElementById("status");
+    const successText = form.dataset.successText;
+    let isSubmitting = false;
+    let resetGuard = false;
+    let audioContext = null;
+
+    function ensureAudioContext() {
+      if (audioContext) {
+        if (audioContext.state === "suspended") {
+          audioContext.resume().catch(() => {});
+        }
+        return audioContext;
+      }
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) {
+        return null;
+      }
+      audioContext = new Ctx();
+      return audioContext;
+    }
+
+    function playCandyTone() {
+      const ctx = ensureAudioContext();
+      if (!ctx) return;
+      const freqs = [659, 784, 988];
+      freqs.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const start = ctx.currentTime + idx * 0.03;
+        const end = start + 0.18;
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.06, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, end);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(start);
+        osc.stop(end);
+      });
+    }
+
+    const triggerAnimation = (optionEl) => {
+      if (!optionEl) {
+        return;
+      }
+      optionEl.classList.add("is-animating");
+      setTimeout(() => optionEl.classList.remove("is-animating"), 650);
+    };
+
+    const handleSelection = async (value, optionEl) => {
+      if (isSubmitting) {
+        return;
+      }
+      isSubmitting = true;
+      form.dataset.busy = "true";
+      triggerAnimation(optionEl);
+      playCandyTone();
+      statusEl.hidden = true;
+      statusEl.classList.remove("is-error");
+      try {
+        const res = await fetch(`/api/feedback?site_id=${encodeURIComponent(siteId)}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ rating: Number(value) })
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          throw new Error(data.error || "Request failed");
+        }
+        statusEl.textContent = successText || "Got it – thanks!";
+        statusEl.hidden = false;
+        statusEl.classList.remove("is-error");
+        resetGuard = true;
+        form.reset();
+        setTimeout(() => {
+          resetGuard = false;
+        }, 0);
+        setTimeout(() => {
+          statusEl.hidden = true;
+          statusEl.textContent = "";
+        }, 3200);
+      } catch (error) {
+        console.error(error);
+        statusEl.textContent = "Network hiccup – please try again.";
+        statusEl.hidden = false;
+        statusEl.classList.add("is-error");
+      } finally {
+        delete form.dataset.busy;
+        isSubmitting = false;
+      }
+    };
+
+    form.addEventListener("change", (event) => {
+      if (event.target.name === "rating") {
+        if (resetGuard || !event.target.checked) {
+          return;
+        }
+        const optionEl = event.target.closest(".emoji-option");
+        handleSelection(event.target.value, optionEl);
+      }
+    });
+  </script>
+</body>
+</html>

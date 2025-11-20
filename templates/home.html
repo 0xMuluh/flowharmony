@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Control Deck</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="home-body" data-site="{{ site_id }}">
+  <div class="home-background" aria-hidden="true"></div>
+  <main class="home-shell">
+    <section class="home-hero">
+      <div class="home-hero__text">
+        <span class="home-hero__tag">FlowHarmony control deck</span>
+        <h1>{{ site_name }}</h1>
+        <p>Launch every service surface from a single, beautiful hub.</p>
+        <div class="home-hero__meta">
+          <span class="home-chip">Site ID · {{ site_id }}</span>
+          <span class="home-chip">{{ today_label }}</span>
+        </div>
+      </div>
+      <div class="home-hero__cta">
+        <p class="home-hero__hint">Quick launch</p>
+        <div class="home-quick">
+          {% for item in quick_links %}
+          <a class="home-quick__link" href="{{ item.href }}">
+            <span class="home-quick__icon">{{ item.icon }}</span>
+            <span class="home-quick__label">{{ item.label }}</span>
+          </a>
+          {% endfor %}
+        </div>
+        <a class="home-cta" href="#nav-sections">Browse all surfaces</a>
+      </div>
+    </section>
+
+    <section id="nav-sections" class="home-sections" aria-label="Navigation tiles">
+      {% for section in nav_sections %}
+      <div class="home-section">
+        <header class="home-section__head">
+          <h2>{{ section.heading }}</h2>
+          <p>{{ section.description }}</p>
+        </header>
+        <div class="home-nav-grid">
+          {% for card in section.cards %}
+          <a class="home-card" href="{{ card.href }}">
+            <span class="home-card__icon">{{ card.icon }}</span>
+            <h3 class="home-card__title">{{ card.title }}</h3>
+            <p class="home-card__description">{{ card.description }}</p>
+            <span class="home-card__cta">Open surface</span>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+  </main>
+</body>
+</html>

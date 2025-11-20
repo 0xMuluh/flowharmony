@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Live Wait Times</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="page-body" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="page-shell wait-shell">
+    <header class="page-header">
+      <div>
+        <h1>Live wait intelligence</h1>
+        <p>Updated {{ view.updated_at }} · {{ view.diners_so_far }} diners served ({{ '%.0f' % (view.served_percent or 0) }}%)</p>
+      </div>
+      <a class="btn btn-secondary" href="/manager?site_id={{ site_id }}">Back to manager</a>
+    </header>
+
+    <section class="wait-grid">
+      {% for line in view.lines %}
+      <article class="wait-card wait-card--{{ line.status }}">
+        <div class="wait-card__header">
+          <div class="wait-card__slot">{{ line.slot_label }}</div>
+          <div class="wait-card__station">{{ line.station }}</div>
+        </div>
+        <div class="wait-card__metrics">
+          <div class="wait-metric">
+            <span class="wait-metric__label">Wait</span>
+            <span class="wait-metric__value">{{ '%.1f' % line.wait_minutes }} min</span>
+          </div>
+          <div class="wait-metric">
+            <span class="wait-metric__label">In line</span>
+            <span class="wait-metric__value">{{ line.line_length }}</span>
+          </div>
+          <div class="wait-status wait-status--{{ line.status }}">{{ line.status|capitalize }}</div>
+        </div>
+        <p class="wait-card__message">{{ line.message }}</p>
+      </article>
+      {% endfor %}
+    </section>
+  </div>
+</body>
+</html>

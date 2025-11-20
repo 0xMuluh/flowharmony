@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Live Waitboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="page-body wait-shell" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="page-shell">
+    <header class="page-header">
+      <div>
+        <h1>Live waitboard</h1>
+        <p id="wait-meta">
+          {{ view.diners_so_far }} served /
+          {{ view.total_expected }} expected ·
+          Updated {{ view.updated_at }}
+        </p>
+      </div>
+      <div class="page-actions">
+        <span class="btn btn-secondary" id="served-chip">
+          {{ '%.0f' % (view.served_percent or 0) }}% service progress
+        </span>
+      </div>
+    </header>
+
+    <section class="wait-spotlight">
+      {% set current = lines[0] if lines else None %}
+      <article class="wait-card wait-card--spotlight" id="wait-card">
+        <header class="wait-card__header">
+          <div>
+            <div class="wait-card__slot" id="card-slot">{{ current.slot_label if current else '—' }}</div>
+            <div class="wait-card__station" id="card-station">{{ current.station if current else '' }}</div>
+          </div>
+          <span class="wait-status wait-status--{{ current.status if current else 'moving' }}" id="card-status">
+            {{ current.status if current else 'moving' }}
+          </span>
+        </header>
+        <div class="wait-card__metrics">
+          <div>
+            <p class="wait-metric__label">Wait</p>
+            <p class="wait-metric__value"><span id="card-wait">{{ '%.1f' % current.wait_minutes if current else '0.0' }}</span> min</p>
+          </div>
+          <div>
+            <p class="wait-metric__label">Line length</p>
+            <p class="wait-metric__value"><span id="card-line">{{ current.line_length if current else 0 }}</span> ppl</p>
+          </div>
+        </div>
+        <p class="wait-card__message" id="card-message">{{ current.message if current else 'Waiting for live data…' }}</p>
+      </article>
+      <div class="wait-carousel-controls" id="wait-carousel">
+        {% for line in lines %}
+          <button class="wait-dot{% if loop.first %} is-active{% endif %}" data-index="{{ loop.index0 }}"></button>
+        {% endfor %}
+      </div>
+      <p class="wait-empty" id="wait-empty" {% if lines %}hidden{% endif %}>No live wait data yet.</p>
+      <section class="wait-carousel" aria-label="All stations">
+        <button class="carousel-nav" id="carousel-prev" aria-label="Previous station">‹</button>
+        <div class="carousel-window">
+          <div class="wait-track" id="wait-track"></div>
+        </div>
+        <button class="carousel-nav" id="carousel-next" aria-label="Next station">›</button>
+      </section>
+    </section>
+  </div>
+
+  <div id="reaction-overlay" class="reaction-overlay" aria-live="polite"></div>
+
+  <script src="/static/reactions.js"></script>
+  <script>
+    const siteId = document.body.dataset.site || "flavoria";
+    const servedChip = document.getElementById("served-chip");
+    const waitMeta = document.getElementById("wait-meta");
+    const cardEl = document.getElementById("wait-card");
+    const slotEl = document.getElementById("card-slot");
+    const stationEl = document.getElementById("card-station");
+    const statusEl = document.getElementById("card-status");
+    const waitValueEl = document.getElementById("card-wait");
+    const lineValueEl = document.getElementById("card-line");
+    const messageEl = document.getElementById("card-message");
+    const carouselEl = document.getElementById("wait-carousel");
+    const emptyEl = document.getElementById("wait-empty");
+    const trackEl = document.getElementById("wait-track");
+    const prevBtn = document.getElementById("carousel-prev");
+    const nextBtn = document.getElementById("carousel-next");
+    const reactionOverlay = document.getElementById("reaction-overlay");
+    const reactionChannel = "waitboard";
+
+    let lines = {{ lines_json | tojson }};
+    let currentIndex = lines.length ? 0 : -1;
+    let rotationTimer = null;
+
+    if (window.FlowHarmonyReactions && reactionOverlay) {
+      window.FlowHarmonyReactions.mount({ channel: reactionChannel, container: reactionOverlay, maxVisible: 4, durationMs: 5200 });
+    }
+
+    function applyStatus(status) {
+      const normalized = ["busy", "steady", "moving"].includes(status) ? status : "moving";
+      statusEl.className = `wait-status wait-status--${normalized}`;
+      statusEl.textContent = normalized;
+    }
+
+    function renderLine(line) {
+      if (!line) {
+        emptyEl.hidden = false;
+        cardEl.hidden = true;
+        carouselEl.innerHTML = "";
+        trackEl.innerHTML = "";
+        return;
+      }
+      emptyEl.hidden = true;
+      cardEl.hidden = false;
+      slotEl.textContent = line.slot_label;
+      stationEl.textContent = line.station;
+      applyStatus(line.status);
+      waitValueEl.textContent = line.wait_minutes.toFixed(1);
+      lineValueEl.textContent = line.line_length;
+      messageEl.textContent = line.message;
+      cardEl.classList.remove("wait-card--transition");
+      void cardEl.offsetWidth;
+      cardEl.classList.add("wait-card--transition");
+    }
+
+    function buildDots() {
+      carouselEl.innerHTML = "";
+      lines.forEach((_, idx) => {
+        const btn = document.createElement("button");
+        btn.className = "wait-dot" + (idx === currentIndex ? " is-active" : "");
+        btn.dataset.index = String(idx);
+        carouselEl.appendChild(btn);
+      });
+    }
+
+    carouselEl.addEventListener("click", (event) => {
+      const target = event.target.closest(".wait-dot");
+      if (!target) return;
+      const idx = Number(target.dataset.index);
+      if (Number.isNaN(idx)) return;
+      goToIndex(idx);
+      restartRotation();
+    });
+
+    function goToIndex(idx) {
+      if (!lines.length) {
+        renderLine(null);
+        return;
+      }
+      currentIndex = (idx + lines.length) % lines.length;
+      renderLine(lines[currentIndex]);
+      [...carouselEl.children].forEach((dot, dotIdx) => {
+        dot.classList.toggle("is-active", dotIdx === currentIndex);
+      });
+      updateTrackPosition();
+    }
+
+    function renderTrack() {
+      trackEl.innerHTML = "";
+      if (!lines.length) {
+        const emptySlide = document.createElement("div");
+        emptySlide.className = "carousel-empty";
+        emptySlide.textContent = "No stations scheduled today.";
+        trackEl.appendChild(emptySlide);
+        return;
+      }
+      lines.forEach((line, idx) => {
+        const slide = document.createElement("article");
+        slide.className = "wait-slide";
+        slide.dataset.signal = line.status;
+        slide.innerHTML = `
+          <div class="station-card__head">
+            <span class="station-card__tag">${line.slot_label}</span>
+            <span class="station-card__signal">${line.status}</span>
+          </div>
+          <p class="station-card__detail">${line.station}</p>
+          <div class="station-card__metrics">
+            <div>
+              <p class="metric-label">Wait</p>
+              <p class="metric-value">${line.wait_minutes.toFixed(1)} min</p>
+            </div>
+            <div>
+              <p class="metric-label">Line</p>
+              <p class="metric-value">${line.line_length}</p>
+            </div>
+          </div>
+        `;
+        slide.addEventListener("click", () => {
+          goToIndex(idx);
+          startRotation();
+        });
+        trackEl.appendChild(slide);
+      });
+      updateTrackPosition();
+    }
+
+    function updateTrackPosition() {
+      trackEl.querySelectorAll(".wait-slide").forEach((slide, idx) => {
+        slide.classList.toggle("is-active", idx === currentIndex);
+      });
+      const slide = trackEl.querySelector(".wait-slide");
+      if (!slide) return;
+      const style = window.getComputedStyle(slide);
+      const spacing = parseFloat(style.marginRight || 0) + parseFloat(style.marginLeft || 0) + 24;
+      const offset = (slide.offsetWidth + spacing) * currentIndex;
+      trackEl.style.transform = `translateX(${-offset}px)`;
+    }
+
+    function startRotation() {
+      if (rotationTimer) {
+        clearInterval(rotationTimer);
+      }
+      if (lines.length <= 1) {
+        rotationTimer = null;
+        return;
+      }
+      rotationTimer = setInterval(() => {
+        goToIndex(currentIndex + 1);
+      }, 3000);
+    }
+
+    if (prevBtn) {
+      prevBtn.addEventListener("click", () => {
+        if (!lines.length) return;
+        goToIndex(currentIndex - 1);
+        startRotation();
+      });
+    }
+
+    if (nextBtn) {
+      nextBtn.addEventListener("click", () => {
+        if (!lines.length) return;
+        goToIndex(currentIndex + 1);
+        startRotation();
+      });
+    }
+
+    async function refreshWaits() {
+      try {
+        const res = await fetch(`/api/waits?site_id=${encodeURIComponent(siteId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (window.FlowHarmonyReactions) {
+          window.FlowHarmonyReactions.ingest(reactionChannel, data.reactions || []);
+        }
+        servedChip.textContent = `${Math.round(data.served_percent || 0)}% service progress`;
+        waitMeta.textContent = `${data.diners_so_far} served / ${data.total_expected} expected · Updated ${data.updated_at}`;
+        lines = data.lines || [];
+        const previousSlot = currentIndex >= 0 && lines[currentIndex] ? lines[currentIndex].service_slot : null;
+        const newIndex = lines.findIndex(line => line.service_slot === previousSlot);
+        currentIndex = newIndex >= 0 ? newIndex : (lines.length ? 0 : -1);
+        buildDots();
+        goToIndex(currentIndex);
+        renderTrack();
+        startRotation();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    buildDots();
+    renderLine(lines[currentIndex] || null);
+    renderTrack();
+    startRotation();
+
+    refreshWaits();
+    setInterval(refreshWaits, 15000);
+  </script>
+</body>
+</html>

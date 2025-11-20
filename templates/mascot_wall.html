@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Mascot Wall</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="mascot-body" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <main class="mascot-stage">
+    <section class="mascot-poster">
+      <div class="mascot-video">
+        <video id="mascot-video" autoplay loop muted playsinline poster="/static/assets/mascot_dance.webm">
+          <source src="/static/assets/mascot_dance.webm" type="video/webm">
+        </video>
+        <div class="mascot-gradient"></div>
+      </div>
+      <div class="mascot-overlay">
+        <div class="mascot-stats">
+          <div class="stat-card">
+            <p class="stat-label">Total reactions</p>
+            <p class="stat-value" id="stat-total">{{ summary.total_entries }}</p>
+          </div>
+          <div class="stat-card">
+            <p class="stat-label">Pulse</p>
+            <p class="stat-value" id="stat-pulse">–</p>
+            <p class="stat-sub" id="stat-pulse-label">Waiting for data…</p>
+          </div>
+          <div class="stat-card">
+            <p class="stat-label">Top vibes</p>
+            <p class="stat-value" id="stat-top">–</p>
+          </div>
+        </div>
+        <div class="mascot-marquee" id="reaction-stream" aria-live="polite"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const siteId = document.body.dataset.site || "flavoria";
+    const apiUrl = `/api/feedback_summary?site_id=${encodeURIComponent(siteId)}`;
+    const totalEl = document.getElementById("stat-total");
+    const pulseEl = document.getElementById("stat-pulse");
+    const pulseLabelEl = document.getElementById("stat-pulse-label");
+    const topEl = document.getElementById("stat-top");
+    const streamEl = document.getElementById("reaction-stream");
+    let latestIds = new Set(({{ summary.recent|tojson|safe }} || []).map(entry => entry.timestamp || entry.value));
+    let lastTotal = {{ summary.total_entries }};
+
+    function pulseMascot(intensity = 1) {
+      const video = document.getElementById("mascot-video");
+      if (!video) return;
+      video.classList.remove("mascot-video--pulse");
+      void video.offsetWidth;
+      video.style.setProperty("--pulse-scale", 1 + 0.02 * intensity);
+      video.classList.add("mascot-video--pulse");
+    }
+
+    function addReactionChip(entry) {
+      const chip = document.createElement("div");
+      chip.className = "reaction-chip";
+      chip.textContent = `${entry.question}: ${entry.value}`;
+      streamEl.appendChild(chip);
+      requestAnimationFrame(() => chip.classList.add("is-visible"));
+      setTimeout(() => {
+        chip.classList.remove("is-visible");
+        setTimeout(() => chip.remove(), 600);
+      }, 6000);
+    }
+
+    function summarizePulse(rows) {
+      if (!rows || !rows.length) {
+        pulseEl.textContent = "–";
+        pulseLabelEl.textContent = "No signals yet";
+        topEl.textContent = "–";
+        return;
+      }
+      const most = rows[0];
+      pulseEl.textContent = most.average_score !== null ? most.average_score.toFixed(1) : "–";
+      pulseLabelEl.textContent = most.label;
+      const second = rows[1];
+      topEl.textContent = second ? `${second.label}` : most.label;
+    }
+
+    async function refreshSummary() {
+      try {
+        const res = await fetch(apiUrl);
+        if (!res.ok) return;
+        const data = await res.json();
+        summarizePulse(data.rows || []);
+        totalEl.textContent = data.total_entries;
+        if (data.recent) {
+          data.recent.forEach(entry => {
+            const key = entry.timestamp || `${entry.question}-${entry.value}-${Math.random()}`;
+            if (!latestIds.has(key)) {
+              latestIds.add(key);
+              addReactionChip(entry);
+            }
+          });
+        }
+        if (data.total_entries > lastTotal) {
+          const delta = data.total_entries - lastTotal;
+          pulseMascot(Math.min(delta, 5));
+          lastTotal = data.total_entries;
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    refreshSummary();
+    setInterval(refreshSummary, 5000);
+  </script>
+</body>
+</html>

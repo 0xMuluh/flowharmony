@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Manager Prevention Center</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="manager-body" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="manager-layout">
+    <header class="manager-hero">
+      <div class="hero-title">Today – {{ view.today_banner.date_str }}</div>
+      <div class="hero-grid">
+        <div class="hero-card">
+          <div class="hero-label">Predicted covers</div>
+          <div class="hero-value">{{ view.today_banner.predicted_covers }}</div>
+          <div class="hero-sub">{{ '%.0f' % view.today_banner.predicted_covers_delta_pct }} % vs last week</div>
+        </div>
+        <div class="hero-card">
+          <div class="hero-label">Waste if no action</div>
+          <div class="hero-value">{{ '%.1f' % view.today_banner.predicted_waste_no_action_kg }} kg</div>
+          <div class="hero-sub">≈ €{{ '%.0f' % view.today_banner.predicted_waste_no_action_eur }}</div>
+        </div>
+        <div class="hero-card hero-card--highlight">
+          <div class="hero-label">With FlowHarmony</div>
+          <div class="hero-value">{{ '%.1f' % view.today_banner.predicted_waste_with_fh_kg }} kg</div>
+          <div class="hero-sub">≈ €{{ '%.0f' % view.today_banner.predicted_waste_with_fh_eur }}</div>
+        </div>
+      </div>
+    </header>
+
+    <section class="manager-section">
+      <div class="section-header">
+        <h2>7-day menu prevention</h2>
+        <button id="btn-send-menu" class="btn btn-primary">Send recommended menu to Jamix</button>
+      </div>
+      <div class="table-wrapper">
+        <table class="manager-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Slot</th>
+              <th>Station</th>
+              <th>Weather</th>
+              <th>Predicted covers</th>
+              <th>Recommended dish</th>
+              <th>Planned main</th>
+              <th>Uptake if kept</th>
+              <th>Suggested swap</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in view.menu_prevention_rows %}
+            <tr data-menu-date="{{ row.date_iso }}" data-menu-slot="{{ row.service_slot }}">
+              <td>{{ row.date_str }}</td>
+              <td><span class="slot-tag">{{ row.slot_label }}</span></td>
+              <td>{{ row.station_label }}</td>
+              <td>{{ row.weather }}</td>
+              <td>{{ row.predicted_covers }}</td>
+              <td>{{ row.recommended_dish_name }}</td>
+              <td>
+                {{ row.current_dish_name }}
+                {% if row.other_items %}
+                <div class="muted-list">+ {{ row.other_items }}</div>
+                {% endif %}
+              </td>
+              <td>{{ row.uptake_if_kept_pct }} %</td>
+              <td>{{ row.suggested_swap_text }}</td>
+              <td>
+                <span class="status-pill{% if row.swap_status == 'approved' %} status-pill--approved{% elif row.swap_status == 'ignored' %} status-pill--ignored{% endif %}" data-status>
+                  {{ row.swap_status|capitalize }}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="manager-section">
+      <h2>48 h prevention alerts</h2>
+      <div class="alerts-grid">
+        {% if view.alerts_48h %}
+          {% for alert in view.alerts_48h %}
+          <div class="alert-card" data-alert-date="{{ alert.date_iso }}" data-alert-slot="{{ alert.service_slot }}">
+            <div class="alert-label">{{ alert.date_str }}</div>
+            <div class="alert-slot">{{ alert.slot_label }}</div>
+            <p class="alert-message">{{ alert.message }}</p>
+            <p class="alert-action">{{ alert.action_text }}</p>
+            <div class="alert-buttons">
+              <button class="btn btn-primary btn-approve" data-date="{{ alert.date_iso }}" data-slot="{{ alert.service_slot }}">Approve swap</button>
+              <button class="btn btn-secondary btn-ignore" data-date="{{ alert.date_iso }}" data-slot="{{ alert.service_slot }}">Ignore</button>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="alert-empty">No high-impact prevention alerts in the next 48 h.</div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="manager-section">
+      <h2>Live service overview</h2>
+      <div class="table-wrapper">
+        <table class="manager-table">
+          <thead>
+            <tr>
+              <th>Dish</th>
+              <th>Planned (kg)</th>
+              <th>Sold so far (kg)</th>
+              <th>Forecast next 30 min (kg)</th>
+              <th>Pan level</th>
+              <th>Satisfaction</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in view.live_overview_rows %}
+            <tr>
+              <td>{{ row.dish_name }}</td>
+              <td>{{ '%.1f' % row.planned_kg }}</td>
+              <td>{{ '%.1f' % row.sold_kg }}</td>
+              <td>{{ '%.1f' % row.forecast_next_30_min_kg }}</td>
+              <td>{{ row.pan_level_percent }} %</td>
+              <td>{{ row.satisfaction_percent }} %</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="manager-section">
+      <h2>Weekly report</h2>
+      <div class="weekly-card">
+        <p>This week waste: <strong>{{ '%.1f' % view.weekly_report.waste_kg }} kg</strong> (↓ {{ '%.0f' % (100 - (view.weekly_report.waste_kg / view.weekly_report.waste_baseline_kg * 100)) }} % vs baseline)</p>
+        <p>CO₂ saved: <strong>{{ '%.0f' % view.weekly_report.co2_saved_kg }} kg</strong></p>
+        <p>Money saved: <strong>€{{ '%.0f' % view.weekly_report.money_saved_eur }}</strong></p>
+        {% if view.weekly_report.bonus_trigger_met %}
+        <p class="bonus-text">→ Bonus payout trigger met (€0.99 × avoided kg = €{{ '%.0f' % view.weekly_report.bonus_amount_eur }})</p>
+        {% else %}
+        <p class="bonus-text muted">Bonus trigger not reached yet.</p>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+
+  <div id="reaction-overlay" class="reaction-overlay" aria-live="polite"></div>
+  <div id="manager-toast" class="manager-toast" hidden></div>
+
+  <script src="/static/reactions.js"></script>
+  <script>
+    const siteId = document.body.dataset.site || "flavoria";
+    const reactionOverlay = document.getElementById("reaction-overlay");
+    const reactionChannel = "manager";
+
+    async function postManager(url, payload) {
+      const res = await fetch(`${url}?site_id=${encodeURIComponent(siteId)}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload || {})
+      });
+      if (!res.ok) {
+        throw new Error("Request failed");
+      }
+      return res.json();
+    }
+
+    function showToast(message) {
+      const el = document.getElementById("manager-toast");
+      el.textContent = message;
+      el.hidden = false;
+      el.classList.add("visible");
+      setTimeout(() => {
+        el.classList.remove("visible");
+        el.hidden = true;
+      }, 3000);
+    }
+
+    function updateTableStatus(dateIso, slot, statusText, extraClass) {
+      const selector = slot ? `[data-menu-date="${dateIso}"][data-menu-slot="${slot}"] [data-status]` : `[data-menu-date="${dateIso}"] [data-status]`;
+      document.querySelectorAll(selector).forEach(el => {
+        el.textContent = statusText;
+        el.classList.remove("status-pill--approved", "status-pill--ignored");
+        if (extraClass) {
+          el.classList.add(extraClass);
+        }
+      });
+    }
+
+    function startReactionPolling() {
+      if (!window.FlowHarmonyReactions || !reactionOverlay) {
+        return;
+      }
+      window.FlowHarmonyReactions.mount({ channel: reactionChannel, container: reactionOverlay, maxVisible: 5, durationMs: 5400 });
+      const pull = async () => {
+        try {
+          const res = await fetch(`/api/reactions?site_id=${encodeURIComponent(siteId)}`);
+          if (!res.ok) {
+            return;
+          }
+          const data = await res.json();
+          window.FlowHarmonyReactions.ingest(reactionChannel, data.reactions || []);
+        } catch (error) {
+          /* swallow network blips */
+        }
+      };
+      pull();
+      setInterval(pull, 12000);
+    }
+
+    document.getElementById("btn-send-menu").addEventListener("click", async () => {
+      try {
+        const rows = document.querySelectorAll("[data-menu-date]");
+        for (const row of rows) {
+          await postManager("/api/manager/send_menu_to_jamix", {date: row.dataset.menuDate, service_slot: row.dataset.menuSlot});
+          updateTableStatus(row.dataset.menuDate, row.dataset.menuSlot, "Approved", "status-pill--approved");
+        }
+        showToast("Recommended menu sent");
+      } catch (err) {
+        console.error(err);
+        showToast("Failed to send menu");
+      }
+    });
+
+    document.querySelectorAll(".btn-approve").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const dateIso = btn.dataset.date;
+        const slot = btn.dataset.slot;
+        try {
+          await postManager("/api/manager/approve_swap", {date: dateIso, service_slot: slot});
+          btn.closest(".alert-card").classList.add("alert-card--approved");
+          updateTableStatus(dateIso, slot, "Approved", "status-pill--approved");
+          showToast("Swap approved");
+        } catch (err) {
+          console.error(err);
+          showToast("Could not approve swap");
+        }
+      });
+    });
+
+    document.querySelectorAll(".btn-ignore").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const dateIso = btn.dataset.date;
+        const slot = btn.dataset.slot;
+        try {
+          await postManager("/api/manager/ignore_swap", {date: dateIso, service_slot: slot});
+          btn.closest(".alert-card").classList.add("alert-card--ignored");
+          updateTableStatus(dateIso, slot, "Ignored", "status-pill--ignored");
+          showToast("Swap ignored");
+        } catch (err) {
+          console.error(err);
+          showToast("Could not ignore swap");
+        }
+      });
+    });
+
+    startReactionPolling();
+  </script>
+</body>
+</html>

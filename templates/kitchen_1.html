@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Kitchen Guidance</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="kitchen-body" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="kitchen-background"></div>
+  <main class="kitchen-shell">
+    <section class="kitchen-card">
+      <header class="kitchen-head">
+        <div>
+          <p class="eyebrow">FlowHarmony · Next 30 minutes</p>
+          <h1 class="head-title">Prep {{ dish_name }}</h1>
+        </div>
+        <div class="kitchen-head__status">
+          <span id="status" class="status-chip">Pending</span>
+          <div class="traffic-indicator">
+            <div class="traffic-light" id="traffic-light" data-state="ready">
+              <span class="light light-red"></span>
+              <span class="light light-amber"></span>
+              <span class="light light-green"></span>
+            </div>
+            <p class="traffic-label" id="traffic-label">Hold steady</p>
+            <p class="traffic-metric" id="traffic-metric">Model flow nominal</p>
+          </div>
+        </div>
+      </header>
+
+      <div class="primary-display">
+        <p class="display-label">Add to pan now</p>
+        <div class="grams-display">
+          <span id="grams">–</span>
+          <span class="units">g</span>
+        </div>
+        <p class="display-sub" id="wave-label">Awaiting next wave</p>
+      </div>
+
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">Next wave diners</p>
+          <p class="kpi-value" id="predicted-diners">–</p>
+          <p class="kpi-sub" id="wave-index-label">Wave –</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Pan fill</p>
+          <p class="kpi-value"><span id="pan-fill">–</span>%</p>
+          <div class="pan-progress"><span id="pan-progress"></span></div>
+          <p class="kpi-sub" id="pan-callout">Hold steady</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Satisfaction</p>
+          <p class="kpi-value" id="satisfaction">no data</p>
+          <p class="kpi-sub">Tray feedback live</p>
+        </article>
+      </div>
+
+      <div class="secondary-info">
+        <div>
+          <p class="secondary-label">Chef note</p>
+          <p class="secondary-text" id="chef-note">Keeping things balanced…</p>
+        </div>
+        <div class="timestamp" id="updated-at">Updated –</div>
+      </div>
+
+      <div class="card-actions">
+        <button id="btn-done" class="btn btn-primary">Mark done</button>
+        <button id="btn-skip" class="btn btn-secondary">Skip decision</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const siteId = document.body.dataset.site || "flavoria";
+
+    const statusEl = document.getElementById("status");
+    const trafficLightEl = document.getElementById("traffic-light");
+    const trafficLabelEl = document.getElementById("traffic-label");
+    const trafficMetricEl = document.getElementById("traffic-metric");
+    const panProgressEl = document.getElementById("pan-progress");
+    const updatedAtEl = document.getElementById("updated-at");
+    const panCalloutEl = document.getElementById("pan-callout");
+    const chefNoteEl = document.getElementById("chef-note");
+    const doneBtn = document.getElementById("btn-done");
+    const skipBtn = document.getElementById("btn-skip");
+    const waveLabelEl = document.getElementById("wave-label");
+    const waveIndexLabelEl = document.getElementById("wave-index-label");
+    let latestDecision = null;
+    let posting = false;
+    let currentSignalLevel = null;
+    let audioContext = null;
+
+    function ensureAudioContext() {
+      if (audioContext) {
+        if (audioContext.state === "suspended") {
+          audioContext.resume().catch(() => {});
+        }
+        return audioContext;
+      }
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) {
+        return null;
+      }
+      audioContext = new Ctx();
+      return audioContext;
+    }
+
+    function playTrafficTone(level) {
+      const ctx = ensureAudioContext();
+      if (!ctx) return;
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const now = ctx.currentTime;
+      const tones = {
+        critical: 880,
+        warning: 660,
+        ready: 440
+      };
+      oscillator.frequency.value = tones[level] || 520;
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      oscillator.connect(gain).connect(ctx.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.55);
+    }
+
+    function playSelectionTone() {
+      const ctx = ensureAudioContext();
+      if (!ctx) return;
+      const notes = [784, 932, 1046];
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const start = ctx.currentTime + idx * 0.04;
+        const end = start + 0.22;
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.05, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, end);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(start);
+        osc.stop(end);
+      });
+    }
+
+    function setButtonsDisabled(state) {
+      doneBtn.disabled = state;
+      skipBtn.disabled = state;
+    }
+
+    function applyStatusStyles(status) {
+      const normalized = status ? status.toLowerCase() : "pending";
+      const label = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+      statusEl.innerText = label;
+      statusEl.dataset.status = normalized;
+    }
+
+    function updateUpdatedAt(decision) {
+      if (!decision || !decision.timestamp) {
+        updatedAtEl.innerText = "Updated –";
+        return;
+      }
+      const formatted = new Date(decision.timestamp).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+      updatedAtEl.innerText = `Updated ${formatted}`;
+    }
+
+    function updateTrafficLight(level, label, multiplier) {
+      const normalized = ["critical", "warning", "ready"].includes(level) ? level : "ready";
+      trafficLightEl.dataset.state = normalized;
+      trafficLabelEl.textContent = label || (normalized === "critical" ? "Refill now" : normalized === "warning" ? "Top up soon" : "Hold steady");
+      if (trafficMetricEl) {
+        if (typeof multiplier === "number" && !Number.isNaN(multiplier)) {
+          const pct = (multiplier - 1) * 100;
+          const formatted = pct === 0 ? "±0.0" : pct.toFixed(1);
+          trafficMetricEl.textContent = `Model demand shift ${formatted}%`;
+        } else {
+          trafficMetricEl.textContent = "Model flow nominal";
+        }
+      }
+    }
+
+    function updatePanCallout(panFill, predicted) {
+      if (panFill <= 30) {
+        panCalloutEl.innerText = "Pan is low – top up now";
+      } else if (panFill >= 90) {
+        panCalloutEl.innerText = "Pan is full – portion mindfully";
+      } else if (predicted >= 40) {
+        panCalloutEl.innerText = "Heavy demand incoming";
+      } else {
+        panCalloutEl.innerText = "Hold steady";
+      }
+    }
+
+    function updateChefNote(panFill, satisfaction, predicted) {
+      let note = "Keeping things balanced…";
+      if (satisfaction !== null && satisfaction < 50) {
+        note = "Feedback dipping – refresh garnishes & check seasoning.";
+      } else if (predicted >= 45) {
+        note = "Large wave coming – stage trays for quick plating.";
+      } else if (panFill < 35) {
+        note = "Low buffer – prep a half-pan as backup.";
+      } else if (panFill > 85) {
+        note = "Plenty ready – slow the scoop to reduce waste.";
+      }
+      chefNoteEl.innerText = note;
+    }
+
+    async function fetchState() {
+      try {
+        const res = await fetch(`/api/state?site_id=${encodeURIComponent(siteId)}`);
+        const data = await res.json();
+        document.getElementById("grams").innerText = data.suggested_grams;
+        document.getElementById("predicted-diners").innerText = data.predicted_diners_next_wave;
+        waveIndexLabelEl.innerText = `Wave ${data.wave_index + 1}`;
+        waveLabelEl.innerText = `Upcoming wave · ${data.predicted_diners_next_wave} diners`;
+        document.getElementById("pan-fill").innerText = data.pan_fill_percent;
+        panProgressEl.style.width = `${data.pan_fill_percent}%`;
+        let sat = data.satisfaction_percent;
+        document.getElementById("satisfaction").innerText = sat === null ? "no data" : sat + "%";
+        updatePanCallout(data.pan_fill_percent, data.predicted_diners_next_wave);
+        updateChefNote(data.pan_fill_percent, sat, data.predicted_diners_next_wave);
+        updateTrafficLight(data.signal_level, data.signal_label, data.feedback_multiplier);
+        if (data.signal_level && data.signal_level !== currentSignalLevel) {
+          currentSignalLevel = data.signal_level;
+          playTrafficTone(currentSignalLevel);
+        }
+        const status = data.last_decision ? data.last_decision.status : "pending";
+        latestDecision = data.last_decision || null;
+        applyStatusStyles(status);
+        updateUpdatedAt(latestDecision);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function postJSON(url, payload) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload || {})
+      });
+      return await res.json();
+    }
+
+    async function sendDecision(path) {
+      if (posting) return;
+      posting = true;
+      setButtonsDisabled(true);
+      playSelectionTone();
+      try {
+        const payload = latestDecision
+          ? {
+              decision_wave_index: latestDecision.wave_index,
+              decision_timestamp: latestDecision.timestamp,
+              service_slot: latestDecision.service_slot
+            }
+          : {};
+        await postJSON(`${path}?site_id=${encodeURIComponent(siteId)}`, payload);
+        await fetchState();
+      } catch (e) {
+        console.error(e);
+      } finally {
+        posting = false;
+        setButtonsDisabled(false);
+      }
+    }
+
+    doneBtn.addEventListener("click", () => sendDecision("/api/done"));
+    skipBtn.addEventListener("click", () => sendDecision("/api/skip"));
+
+    fetchState();
+    setInterval(fetchState, 10000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Feedback Wall</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="page-body" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="page-shell feedback-wall">
+    <header class="page-header">
+      <div>
+        <h1>Feedback wall</h1>
+        <p>{{ summary.total_entries }} micro-feedback signals captured today.</p>
+      </div>
+      {% if embeds %}
+      <nav class="page-actions">
+        {% for embed in embeds %}
+        <a class="btn btn-secondary" href="/{{ embed.route }}?site_id={{ site_id }}&amp;slug={{ embed.slug }}">{{ embed.title }}</a>
+        {% endfor %}
+      </nav>
+      {% endif %}
+    </header>
+
+    <section class="feedback-summary">
+      {% if summary.rows %}
+        {% for row in summary.rows %}
+        <article class="feedback-summary__card">
+          <header>
+            <h2>{{ row.label }}</h2>
+            <span class="pill">{{ row.total_responses }} responses</span>
+          </header>
+          <div class="feedback-summary__body">
+            {% if row.average_score is not none %}
+            <p class="feedback-summary__metric">Average score: <strong>{{ '%.1f' % row.average_score }}</strong></p>
+            {% endif %}
+            {% if row.top_response %}
+            <p class="feedback-summary__metric">Top response: <strong>{{ row.top_response }}</strong></p>
+            {% endif %}
+            {% if row.response_breakdown %}
+            <ul class="feedback-summary__list">
+              {% for value,count in row.response_breakdown.items() %}
+              <li><span>{{ value }}</span><span>{{ count }}</span></li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+        </article>
+        {% endfor %}
+      {% else %}
+        <p class="empty-state">No detailed feedback yet.</p>
+      {% endif %}
+    </section>
+
+    <section class="feedback-recent">
+      <h2>Recent submissions</h2>
+      {% if summary.recent %}
+      <ul>
+        {% for entry in summary.recent %}
+        <li>
+          <span class="recent-chip">{{ entry.question }}</span>
+          <span class="recent-time">{{ entry.display_time or entry.timestamp }}</span>
+          <span class="recent-value">{{ entry.value }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="empty-state">No submissions yet.</p>
+      {% endif %}
+    </section>
+  </div>
+  <div id="reaction-overlay" class="reaction-overlay" aria-live="polite"></div>
+
+  <script src="/static/reactions.js"></script>
+  <script>
+    const siteId = document.body.dataset.site || "flavoria";
+    const reactionOverlay = document.getElementById("reaction-overlay");
+    const reactionChannel = "feedback-wall";
+
+    if (window.FlowHarmonyReactions && reactionOverlay) {
+      window.FlowHarmonyReactions.mount({ channel: reactionChannel, container: reactionOverlay, maxVisible: 6, durationMs: 5600 });
+      const refresh = async () => {
+        try {
+          const res = await fetch(`/api/reactions?site_id=${encodeURIComponent(siteId)}`);
+          if (!res.ok) {
+            return;
+          }
+          const data = await res.json();
+          window.FlowHarmonyReactions.ingest(reactionChannel, data.reactions || []);
+        } catch (error) {
+          /* Ignore intermittent failures */
+        }
+      };
+      refresh();
+      setInterval(refresh, 10000);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Kitchen Companion</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="kitchen-body" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="kitchen-background"></div>
+  <main class="kitchen-shell">
+    <section class="kitchen-card kitchen-card--minimal">
+      <header class="kitchen-head">
+        <div>
+          <p class="eyebrow">FlowHarmony · Live servings</p>
+        </div>
+        <div class="kitchen-head__status">
+          <span id="status" class="status-chip">Pending</span>
+          <div class="traffic-indicator">
+            <div class="traffic-light" id="traffic-light" data-state="ready">
+              <span class="light light-red"></span>
+              <span class="light light-amber"></span>
+              <span class="light light-green"></span>
+            </div>
+            <p class="traffic-label" id="traffic-label">Hold steady</p>
+            <p class="traffic-metric" id="traffic-metric">Model flow nominal</p>
+          </div>
+        </div>
+      </header>
+
+      <div class="station-hero">
+        <div class="station-info">
+          <p class="station-tag" id="station-tag">Station</p>
+          <h2 class="station-dish" id="station-dish">–</h2>
+          <p class="station-detail" id="station-detail">Waiting for guidance…</p>
+        </div>
+        <div class="station-prep">
+          <p class="prep-label">Prep now</p>
+          <p class="prep-value"><span id="station-grams">–</span> g</p>
+          <p class="prep-sub" id="station-portions">≈ – portions</p>
+        </div>
+      </div>
+
+      <div class="station-metrics">
+        <article class="metric-card">
+          <p class="metric-label">Next diners</p>
+          <p class="metric-value" id="station-diners">–</p>
+          <p class="metric-sub">Next 30 min</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Signal</p>
+          <p class="metric-value" id="station-signal">Ready</p>
+          <p class="metric-sub" id="station-wave">Wave –</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Recommendation</p>
+          <p class="metric-value" id="station-rec">–</p>
+          <p class="metric-sub" id="station-status">Status</p>
+        </article>
+      </div>
+
+      <div class="station-actions">
+        <button id="btn-done" class="btn btn-primary">Mark done</button>
+        <button id="btn-skip" class="btn btn-secondary">Skip</button>
+      </div>
+    </section>
+    <section class="station-carousel" aria-label="Stations overview">
+      <button class="carousel-nav" id="carousel-prev" aria-label="Previous station">‹</button>
+      <div class="carousel-window">
+        <div class="carousel-track" id="carousel-track"></div>
+      </div>
+      <button class="carousel-nav" id="carousel-next" aria-label="Next station">›</button>
+    </section>
+    <div id="reaction-overlay" class="reaction-overlay" aria-live="polite"></div>
+  </main>
+
+  <script src="/static/reactions.js"></script>
+  <script>
+    const siteId = document.body.dataset.site || "flavoria";
+
+    const statusEl = document.getElementById("status");
+    const trafficLightEl = document.getElementById("traffic-light");
+    const trafficLabelEl = document.getElementById("traffic-label");
+    const trafficMetricEl = document.getElementById("traffic-metric");
+    const stationTagEl = document.getElementById("station-tag");
+    const stationDishEl = document.getElementById("station-dish");
+    const stationDetailEl = document.getElementById("station-detail");
+    const stationGramsEl = document.getElementById("station-grams");
+    const stationPortionsEl = document.getElementById("station-portions");
+    const stationDinersEl = document.getElementById("station-diners");
+    const stationSignalEl = document.getElementById("station-signal");
+    const stationWaveEl = document.getElementById("station-wave");
+    const stationRecEl = document.getElementById("station-rec");
+    const stationStatusEl = document.getElementById("station-status");
+    const carouselTrackEl = document.getElementById("carousel-track");
+    const carouselPrevBtn = document.getElementById("carousel-prev");
+    const carouselNextBtn = document.getElementById("carousel-next");
+    const doneBtn = document.getElementById("btn-done");
+    const skipBtn = document.getElementById("btn-skip");
+    const reactionOverlay = document.getElementById("reaction-overlay");
+    const reactionChannel = "kitchen";
+    let currentSignalLevel = null;
+    let stationBrief = [];
+    let activeStationIndex = 0;
+    let audioContext = null;
+    let rotationTimer = null;
+    let latestDecision = null;
+
+    if (window.FlowHarmonyReactions && reactionOverlay) {
+      window.FlowHarmonyReactions.mount({ channel: reactionChannel, container: reactionOverlay, maxVisible: 5 });
+    }
+
+    function ensureAudioContext() {
+      if (audioContext) {
+        if (audioContext.state === "suspended") {
+          audioContext.resume().catch(() => {});
+        }
+        return audioContext;
+      }
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) {
+        return null;
+      }
+      audioContext = new Ctx();
+      return audioContext;
+    }
+
+    function playTrafficTone(level) {
+      const ctx = ensureAudioContext();
+      if (!ctx) return;
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const now = ctx.currentTime;
+      const tones = { critical: 880, warning: 660, ready: 440 };
+      oscillator.frequency.value = tones[level] || 520;
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      oscillator.connect(gain).connect(ctx.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.55);
+    }
+
+    function applyStatusStyles(status) {
+      const normalized = status ? status.toLowerCase() : "pending";
+      const label = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+      statusEl.innerText = label;
+      statusEl.dataset.status = normalized;
+    }
+
+    function updateTrafficLight(level, label, multiplier) {
+      const normalized = ["critical", "warning", "ready"].includes(level) ? level : "ready";
+      trafficLightEl.dataset.state = normalized;
+      const activeClass = normalized === "critical" ? "light-red" : normalized === "warning" ? "light-amber" : "light-green";
+      trafficLightEl.querySelectorAll(".light").forEach(light => {
+        light.classList.toggle("is-active", light.classList.contains(activeClass));
+      });
+      trafficLabelEl.textContent = label || (normalized === "critical" ? "Refill now" : normalized === "warning" ? "Top up soon" : "Hold steady");
+      if (typeof multiplier === "number" && !Number.isNaN(multiplier)) {
+        const pct = (multiplier - 1) * 100;
+        const formatted = pct === 0 ? "±0.0" : pct.toFixed(1);
+        trafficMetricEl.textContent = `Model demand shift ${formatted}%`;
+      } else {
+        trafficMetricEl.textContent = "Model flow nominal";
+      }
+    }
+
+    function renderCarousel() {
+      carouselTrackEl.innerHTML = "";
+      if (!stationBrief.length) {
+        const empty = document.createElement("div");
+        empty.className = "carousel-empty";
+        empty.textContent = "No stations scheduled today.";
+        carouselTrackEl.appendChild(empty);
+        return;
+      }
+      stationBrief.forEach((row, idx) => {
+        const slide = document.createElement("article");
+        slide.className = "carousel-card";
+        slide.dataset.signal = row.signal;
+        slide.innerHTML = `
+          <div class="station-card__head">
+            <span class="station-card__tag">${row.slot_label}</span>
+            <span class="station-card__signal">${row.signal}</span>
+          </div>
+          <p class="station-card__dish">${row.dish_name}</p>
+          <p class="station-card__detail">${row.detail}</p>
+          <div class="station-card__metrics">
+            <div>
+              <p class="metric-label">Prep</p>
+              <p class="metric-value">${row.prep_portions} portions</p>
+            </div>
+            <div>
+              <p class="metric-label">Diners</p>
+              <p class="metric-value">${row.predicted_diners}</p>
+            </div>
+          </div>
+        `;
+        slide.addEventListener("click", () => {
+          activeStationIndex = idx;
+          updateStationDisplay();
+          updateCarouselPosition();
+          startCarouselRotation();
+        });
+        carouselTrackEl.appendChild(slide);
+      });
+      requestAnimationFrame(updateCarouselPosition);
+    }
+
+    function updateCarouselPosition() {
+      carouselTrackEl.querySelectorAll(".carousel-card").forEach((card, idx) => {
+        card.classList.toggle("is-active", idx === activeStationIndex);
+      });
+      const card = carouselTrackEl.querySelector(".carousel-card");
+      if (!card) return;
+      const style = window.getComputedStyle(card);
+      const spacing = parseFloat(style.marginRight || 0) + parseFloat(style.marginLeft || 0) + 24;
+      const offset = (card.offsetWidth + spacing) * activeStationIndex;
+      carouselTrackEl.style.transform = `translateX(${-offset}px)`;
+    }
+
+    function startCarouselRotation() {
+      if (rotationTimer) {
+        clearInterval(rotationTimer);
+      }
+      if (!stationBrief.length || stationBrief.length <= 1) {
+        rotationTimer = null;
+        return;
+      }
+      rotationTimer = setInterval(() => {
+        activeStationIndex = (activeStationIndex + 1) % stationBrief.length;
+        updateStationDisplay();
+        updateCarouselPosition();
+      }, 3000);
+    }
+
+    function updateStationDisplay() {
+      if (!stationBrief.length) {
+        stationTagEl.textContent = "Station";
+        stationDishEl.textContent = "–";
+        stationDetailEl.textContent = "Waiting for guidance…";
+        stationGramsEl.textContent = "–";
+        stationPortionsEl.textContent = "≈ – portions";
+        stationDinersEl.textContent = "–";
+        stationSignalEl.textContent = "Ready";
+        stationRecEl.textContent = "–";
+        stationStatusEl.textContent = "Status";
+        return;
+      }
+      const row = stationBrief[activeStationIndex] || stationBrief[0];
+      stationTagEl.textContent = row.slot_label;
+      stationDishEl.textContent = row.dish_name;
+      stationDetailEl.textContent = row.detail;
+      stationGramsEl.textContent = row.prep_grams;
+      stationPortionsEl.textContent = `≈ ${row.prep_portions} portions`;
+      stationDinersEl.textContent = row.predicted_diners;
+      stationSignalEl.textContent = row.signal;
+      stationRecEl.textContent = row.recommended_dish;
+      stationStatusEl.textContent = row.swap_status ? row.swap_status.toUpperCase() : "";
+    }
+
+    async function fetchState() {
+      try {
+        const res = await fetch(`/api/state?site_id=${encodeURIComponent(siteId)}`);
+        const data = await res.json();
+        const decision = data.last_decision || null;
+        latestDecision = decision;
+        applyStatusStyles(decision ? decision.status : "pending");
+        updateTrafficLight(data.signal_level, data.signal_label, data.feedback_multiplier);
+        if (data.signal_level && data.signal_level !== currentSignalLevel) {
+          currentSignalLevel = data.signal_level;
+          playTrafficTone(currentSignalLevel);
+        }
+        stationWaveEl.textContent = data.total_waves ? `Wave ${data.wave_index + 1}/${data.total_waves}` : `Wave ${data.wave_index + 1}`;
+        stationBrief = data.station_brief || [];
+        if (window.FlowHarmonyReactions) {
+          window.FlowHarmonyReactions.ingest(reactionChannel, data.reaction_stream || []);
+        }
+        if (activeStationIndex >= stationBrief.length) {
+          activeStationIndex = 0;
+        }
+        updateStationDisplay();
+        renderCarousel();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function sendDecision(endpoint) {
+      if (!latestDecision) {
+        return;
+      }
+      const payload = {
+        decision_wave_index: latestDecision.wave_index,
+        decision_timestamp: latestDecision.timestamp,
+        service_slot: latestDecision.service_slot,
+      };
+      try {
+        const res = await fetch(`${endpoint}?site_id=${encodeURIComponent(siteId)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          throw new Error("Request failed");
+        }
+        await fetchState();
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    carouselPrevBtn.addEventListener("click", () => {
+      if (!stationBrief.length) return;
+      activeStationIndex = (activeStationIndex - 1 + stationBrief.length) % stationBrief.length;
+      updateStationDisplay();
+      updateCarouselPosition();
+    });
+
+    carouselNextBtn.addEventListener("click", () => {
+      if (!stationBrief.length) return;
+      activeStationIndex = (activeStationIndex + 1) % stationBrief.length;
+      updateStationDisplay();
+      updateCarouselPosition();
+    });
+
+    if (doneBtn) {
+      doneBtn.addEventListener("click", () => sendDecision("/api/done"));
+    }
+    if (skipBtn) {
+      skipBtn.addEventListener("click", () => sendDecision("/api/skip"));
+    }
+
+    fetchState();
+    setInterval(fetchState, 10000);
+  </script>
+</body>
+</html>

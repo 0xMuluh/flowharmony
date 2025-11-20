@@ -1,0 +1,47 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FlowHarmony – Diner Counter</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="counter-body" data-site="{{ site_id }}">
+  {% if not hide_logo %}
+  <a class="app-logo" href="/">
+    <span class="logo-icon">FH</span>
+    <span class="logo-text">FlowHarmony</span>
+  </a>
+  {% endif %}
+  <div class="counter-container">
+    <h1>Diner Counter (Simulation)</h1>
+    <p>Press the button each time a diner enters.</p>
+    <div class="counter-display">
+      Total diners so far today: <span id="count">0</span>
+    </div>
+    <button id="btn-inc" class="btn btn-primary">+1 Diner</button>
+  </div>
+
+  <script>
+    const siteId = document.body.dataset.site || "flavoria";
+
+    async function refreshCount() {
+      const res = await fetch(`/api/state?site_id=${encodeURIComponent(siteId)}`);
+      const data = await res.json();
+      document.getElementById("count").innerText = data.diners_so_far;
+    }
+
+    async function inc() {
+      await fetch(`/api/increment_diner?site_id=${encodeURIComponent(siteId)}`, {
+        method: "POST"
+      });
+      await refreshCount();
+    }
+
+    document.getElementById("btn-inc").addEventListener("click", inc);
+
+    refreshCount();
+    setInterval(refreshCount, 5000);
+  </script>
+</body>
+</html>
