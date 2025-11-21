@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>FlowHarmony – Mascot Wall</title>
+  <title>FlowHarmony – Maskottiseinä</title>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 </head>
@@ -24,16 +24,16 @@
       <div class="mascot-overlay">
         <div class="mascot-stats">
           <div class="stat-card">
-            <p class="stat-label">Total reactions</p>
+            <p class="stat-label">Reaktioita yhteensä</p>
             <p class="stat-value" id="stat-total">{{ summary.total_entries }}</p>
           </div>
           <div class="stat-card">
-            <p class="stat-label">Pulse</p>
+            <p class="stat-label">Pulssi</p>
             <p class="stat-value" id="stat-pulse">–</p>
-            <p class="stat-sub" id="stat-pulse-label">Waiting for data…</p>
+            <p class="stat-sub" id="stat-pulse-label">Odotetaan signaalia…</p>
           </div>
           <div class="stat-card">
-            <p class="stat-label">Top vibes</p>
+            <p class="stat-label">Top-fiilis</p>
             <p class="stat-value" id="stat-top">–</p>
           </div>
         </div>
@@ -77,7 +77,7 @@
     function summarizePulse(rows) {
       if (!rows || !rows.length) {
         pulseEl.textContent = "–";
-        pulseLabelEl.textContent = "No signals yet";
+        pulseLabelEl.textContent = "Ei signaaleja";
         topEl.textContent = "–";
         return;
       }
