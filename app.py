@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
@@ -12,7 +13,29 @@ from uuid import uuid4
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 
+try:
+    from redis import Redis
+    from redis.exceptions import RedisError
+except Exception:  # pragma: no cover - optional dependency
+    Redis = None  # type: ignore
+    RedisError = Exception  # type: ignore
+
 app = Flask(__name__)
+
+
+logger = logging.getLogger(__name__)
+
+REDIS_URL = os.environ.get("FLOWHARMONY_REDIS_URL")
+REDIS_CLIENT = None
+if REDIS_URL and Redis:
+    try:
+        REDIS_CLIENT = Redis.from_url(REDIS_URL, decode_responses=True)
+        REDIS_CLIENT.ping()
+    except Exception as exc:  # pragma: no cover - best effort logging
+        logger.warning("Redis connection failed for %s: %s", REDIS_URL, exc)
+        REDIS_CLIENT = None
+elif REDIS_URL and not Redis:
+    logger.warning("FLOWHARMONY_REDIS_URL is set but redis client is unavailable")
 
 # --- Domain models ---
 
@@ -659,6 +682,132 @@ for screen in FEEDBACK_SCREENS:
 
 MAX_REACTIONS_STORED = 75
 REACTION_RESPONSE_LIMIT = 10
+FEEDBACK_SCORE_HISTORY_LIMIT = 100
+DETAILED_FEEDBACK_HISTORY_LIMIT = 400
+REDIS_ENTRY_TTL_SECONDS = 7 * 24 * 60 * 60
+
+
+def _redis_available() -> bool:
+    return bool(REDIS_CLIENT)
+
+
+def _service_day_storage_id(service_day: ServiceDay) -> str:
+    return f"{service_day.site_id}:{service_day.date.isoformat()}"
+
+
+def _redis_key(prefix: str, service_day: ServiceDay) -> str:
+    return f"fh:{prefix}:{_service_day_storage_id(service_day)}"
+
+
+def _persist_list_entry(service_day: ServiceDay, prefix: str, payload: object, limit: int) -> None:
+    client = REDIS_CLIENT
+    if not client:
+        return
+    key = _redis_key(prefix, service_day)
+    try:
+        data = json.dumps(payload)
+        pipe = client.pipeline()
+        pipe.rpush(key, data)
+        pipe.ltrim(key, -limit, -1)
+        pipe.expire(key, REDIS_ENTRY_TTL_SECONDS)
+        pipe.execute()
+    except (RedisError, TypeError) as exc:  # pragma: no cover - non critical persistence
+        logger.debug("Failed to persist %s entry: %s", prefix, exc)
+
+
+def _load_list_entries(service_day: ServiceDay, prefix: str, limit: int) -> List[object]:
+    client = REDIS_CLIENT
+    if not client:
+        return []
+    key = _redis_key(prefix, service_day)
+    try:
+        # Fetch the newest entries up to the provided limit.
+        raw_entries = client.lrange(key, -limit, -1)
+    except RedisError as exc:  # pragma: no cover - fallback to in-memory data
+        logger.debug("Failed to fetch %s entries: %s", prefix, exc)
+        return []
+    parsed: List[object] = []
+    for raw in raw_entries or []:
+        try:
+            parsed.append(json.loads(raw))
+        except json.JSONDecodeError:
+            continue
+    return parsed
+
+
+def _persist_feedback_score(service_day: ServiceDay, score: int) -> None:
+    _persist_list_entry(service_day, "scores", score, FEEDBACK_SCORE_HISTORY_LIMIT)
+
+
+def _persist_detailed_feedback(service_day: ServiceDay, entry: Dict[str, object]) -> None:
+    _persist_list_entry(service_day, "detailed_feedback", entry, DETAILED_FEEDBACK_HISTORY_LIMIT)
+
+
+def _persist_reaction(service_day: ServiceDay, reaction: Dict[str, object]) -> None:
+    _persist_list_entry(service_day, "reactions", reaction, MAX_REACTIONS_STORED)
+
+
+def get_feedback_scores(service_day: ServiceDay) -> List[int]:
+    if _redis_available():
+        cached = _load_list_entries(service_day, "scores", FEEDBACK_SCORE_HISTORY_LIMIT)
+        if cached:
+            parsed_scores: List[int] = []
+            for entry in cached:
+                try:
+                    parsed_scores.append(int(entry))
+                except (TypeError, ValueError):
+                    continue
+            if parsed_scores:
+                service_day.feedback_scores = parsed_scores
+                return parsed_scores
+    return list(service_day.feedback_scores[-FEEDBACK_SCORE_HISTORY_LIMIT:])
+
+
+def get_detailed_feedback_entries(service_day: ServiceDay, limit: int) -> List[Dict[str, object]]:
+    if _redis_available():
+        cached = _load_list_entries(service_day, "detailed_feedback", max(limit, DETAILED_FEEDBACK_HISTORY_LIMIT))
+        if cached:
+            entries: List[Dict[str, object]] = [entry for entry in cached if isinstance(entry, dict)]
+            if entries:
+                service_day.detailed_feedback = entries
+                return entries[-limit:]
+    return list(service_day.detailed_feedback[-limit:])
+
+
+def _hydrate_service_day_from_store(service_day: ServiceDay) -> None:
+    if not _redis_available():
+        return
+    reactions = _load_list_entries(service_day, "reactions", MAX_REACTIONS_STORED)
+    if reactions:
+        service_day.reaction_stream = [entry for entry in reactions if isinstance(entry, dict)]
+    scores_raw = _load_list_entries(service_day, "scores", FEEDBACK_SCORE_HISTORY_LIMIT)
+    if scores_raw:
+        parsed_scores: List[int] = []
+        for raw in scores_raw:
+            try:
+                parsed_scores.append(int(raw))
+            except (TypeError, ValueError):
+                continue
+        if parsed_scores:
+            service_day.feedback_scores = parsed_scores
+    detailed_entries = _load_list_entries(service_day, "detailed_feedback", DETAILED_FEEDBACK_HISTORY_LIMIT)
+    if detailed_entries:
+        service_day.detailed_feedback = [entry for entry in detailed_entries if isinstance(entry, dict)]
+
+
+def _clear_service_day_storage(service_day: ServiceDay) -> None:
+    client = REDIS_CLIENT
+    if not client:
+        return
+    keys = [
+        _redis_key("reactions", service_day),
+        _redis_key("scores", service_day),
+        _redis_key("detailed_feedback", service_day),
+    ]
+    try:
+        client.delete(*keys)
+    except RedisError as exc:  # pragma: no cover
+        logger.debug("Failed to clear Redis keys %s: %s", keys, exc)
 
 
 def append_reaction_entry(
@@ -692,10 +841,20 @@ def append_reaction_entry(
     service_day.reaction_stream.append(reaction)
     if len(service_day.reaction_stream) > MAX_REACTIONS_STORED:
         service_day.reaction_stream[:] = service_day.reaction_stream[-MAX_REACTIONS_STORED:]
+    _persist_reaction(service_day, reaction)
 
 
 def get_recent_reactions(service_day: ServiceDay, limit: int = REACTION_RESPONSE_LIMIT) -> List[Dict[str, object]]:
-    if limit <= 0 or not service_day.reaction_stream:
+    if limit <= 0:
+        return []
+    if _redis_available():
+        entries = _load_list_entries(service_day, "reactions", max(limit, MAX_REACTIONS_STORED))
+        if entries:
+            typed_entries: List[Dict[str, object]] = [dict(entry) for entry in entries if isinstance(entry, dict)]
+            if typed_entries:
+                service_day.reaction_stream = typed_entries
+                return typed_entries[-limit:]
+    if not service_day.reaction_stream:
         return []
     recent = service_day.reaction_stream[-limit:]
     return [dict(entry) for entry in recent]
@@ -1043,6 +1202,7 @@ def get_or_create_service_day(site_id: str, today: Optional[date] = None) -> Ser
             actual_co2_saved_kg=(float(preset.get("actual_co2_saved_kg")) if preset.get("actual_co2_saved_kg") is not None else None),
             actual_money_saved_eur=(float(preset.get("actual_money_saved_eur")) if preset.get("actual_money_saved_eur") is not None else None),
         )
+        _hydrate_service_day_from_store(SERVICE_DAYS[key])
     return SERVICE_DAYS[key]
 
 
@@ -1060,22 +1220,28 @@ def compute_satisfaction_percent(feedback_scores: List[int]) -> Optional[int]:
     return int(33 + (avg - 1) * (67 / 2.0))
 
 
-def compute_feedback_demand_multiplier(service_day: ServiceDay) -> tuple[float, Dict[str, float]]:
+def compute_feedback_demand_multiplier(
+    service_day: ServiceDay,
+    feedback_scores: Optional[List[int]] = None,
+    detailed_entries: Optional[List[Dict[str, object]]] = None,
+) -> tuple[float, Dict[str, float]]:
     adjustments: Dict[str, float] = {}
     total_delta = 0.0
 
-    if service_day.feedback_scores:
-        avg_rating = sum(service_day.feedback_scores) / len(service_day.feedback_scores)
+    scores = feedback_scores if feedback_scores is not None else get_feedback_scores(service_day)
+    if scores:
+        avg_rating = sum(scores) / len(scores)
         rating_delta = (avg_rating - 2.0) * 0.08
         adjustments["tray_rating"] = round(rating_delta, 4)
         total_delta += rating_delta
 
-    if service_day.detailed_feedback:
+    entries = detailed_entries if detailed_entries is not None else get_detailed_feedback_entries(service_day, DETAILED_FEEDBACK_HISTORY_LIMIT)
+    if entries:
         now = datetime.utcnow()
         cutoff = now - timedelta(minutes=DETAILED_FEEDBACK_WINDOW_MINUTES)
         stats: Dict[str, List[str]] = defaultdict(list)
         samples = 0
-        for entry in reversed(service_day.detailed_feedback):
+        for entry in reversed(entries):
             if samples >= MAX_DETAILED_FEEDBACK_SAMPLES:
                 break
             timestamp = entry.get("timestamp")
@@ -1146,7 +1312,13 @@ def compute_current_state(site_id: str) -> Dict[str, object]:
         target_wave_idx = min(current_wave_idx + 1, last_index)
     service_day.wave_index = target_wave_idx
 
-    feedback_multiplier, feedback_adjustments = compute_feedback_demand_multiplier(service_day)
+    feedback_scores = get_feedback_scores(service_day)
+    detailed_entries = get_detailed_feedback_entries(service_day, DETAILED_FEEDBACK_HISTORY_LIMIT)
+    feedback_multiplier, feedback_adjustments = compute_feedback_demand_multiplier(
+        service_day,
+        feedback_scores=feedback_scores,
+        detailed_entries=detailed_entries,
+    )
     lunch_finished = now.time() >= site.lunch_window_end
     predicted = 0
     if not lunch_finished or DEMO_MODE:
@@ -1165,7 +1337,7 @@ def compute_current_state(site_id: str) -> Dict[str, object]:
         site.portion_grams,
         site.pan_capacity_portions,
     )
-    satisfaction = compute_satisfaction_percent(service_day.feedback_scores)
+    satisfaction = compute_satisfaction_percent(feedback_scores)
     suggested_portions = suggested_grams / site.portion_grams if site.portion_grams else 0
     total_waves = len(waves) if waves else 0
     served_pct = (service_day.diners_so_far / service_day.total_expected_diners * 100) if service_day.total_expected_diners else 0
@@ -1570,7 +1742,7 @@ def build_wait_time_view(site_id: str) -> Dict[str, object]:
 
 def build_feedback_summary(site_id: str) -> Dict[str, object]:
     service_day = get_or_create_service_day(site_id)
-    entries = service_day.detailed_feedback[-200:]
+    entries = get_detailed_feedback_entries(service_day, 200)
     question_stats: Dict[str, Dict[str, object]] = {}
     for entry in entries:
         responses = entry.get("responses", {})
@@ -2166,6 +2338,7 @@ def api_feedback() -> object:
     if rating in (1, 2, 3):
         service_day.feedback_scores.append(rating)
         service_day.feedback_scores[:] = service_day.feedback_scores[-100:]
+        _persist_feedback_score(service_day, rating)
         reaction_meta = LUNCH_PULSE_REACTIONS.get(str(rating), {})
         append_reaction_entry(
             service_day,
@@ -2197,6 +2370,7 @@ def api_feedback_extended() -> object:
     }
     service_day.detailed_feedback.append(entry)
     service_day.detailed_feedback[:] = service_day.detailed_feedback[-400:]
+    _persist_detailed_feedback(service_day, entry)
     question_set = entry["question_set"]
     for key, value in responses.items():
         screen = SCREEN_BY_RESPONSE_KEY.get(str(key))
@@ -2208,7 +2382,8 @@ def api_feedback_extended() -> object:
             title=(screen or {}).get("title"),
             source="extended",
         )
-    return jsonify({"ok": True, "total": len(service_day.detailed_feedback)})
+    total_entries = len(get_detailed_feedback_entries(service_day, DETAILED_FEEDBACK_HISTORY_LIMIT))
+    return jsonify({"ok": True, "total": total_entries})
 
 
 @app.route("/api/done", methods=["POST"])
@@ -2273,8 +2448,11 @@ def api_manager_ignore_swap() -> object:
 def api_reset_day() -> object:
     site_id = get_site_id_from_request()
     key = (site_id, date.today())
-    if key in SERVICE_DAYS:
-        SERVICE_DAYS.pop(key)
+    service_day = SERVICE_DAYS.pop(key, None)
+    if service_day is None:
+        service_day = get_or_create_service_day(site_id)
+    _clear_service_day_storage(service_day)
+    SERVICE_DAYS.pop(key, None)
     return jsonify({"ok": True})
 
 
