@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <title>FlowHarmony – Kitchen Companion</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 </head>
 <body class="kitchen-body" data-site="{{ site_id }}">
   {% if not hide_logo %}
@@ -153,6 +154,12 @@
       statusEl.dataset.status = normalized;
     }
 
+    function pulseTrafficLight() {
+      trafficLightEl.classList.remove("is-pulsing");
+      void trafficLightEl.offsetWidth;
+      trafficLightEl.classList.add("is-pulsing");
+    }
+
     function updateTrafficLight(level, label, multiplier) {
       const normalized = ["critical", "warning", "ready"].includes(level) ? level : "ready";
       trafficLightEl.dataset.state = normalized;
@@ -275,6 +282,7 @@
         if (data.signal_level && data.signal_level !== currentSignalLevel) {
           currentSignalLevel = data.signal_level;
           playTrafficTone(currentSignalLevel);
+          pulseTrafficLight();
         }
         stationWaveEl.textContent = data.total_waves ? `Wave ${data.wave_index + 1}/${data.total_waves}` : `Wave ${data.wave_index + 1}`;
         stationBrief = data.station_brief || [];

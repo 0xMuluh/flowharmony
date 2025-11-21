@@ -3,8 +3,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>FlowHarmony – Lunch Pulse</title>
+  <title>FlowHarmony – Lounaspulssi</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 </head>
 <body class="feedback-alt-body" data-site="{{ site_id }}">
   {% if not hide_logo %}
@@ -15,26 +16,26 @@
   {% endif %}
   <div class="feedback-panel feedback-panel--single">
     <header class="feedback-panel__header">
-      <span class="feedback-tag">Lunch pulse</span>
-      <h1>How was today&apos;s lunch?</h1>
-      <p>Tap once to steer the kitchen vibe.</p>
+      <span class="feedback-tag">Lounaspulssi</span>
+      <h1>Miten tämän päivän lounas maistui?</h1>
+      <p>Yksi napautus ohjaa keittiön fiilistä.</p>
     </header>
-    <form id="quick-feedback" class="feedback-form emoji-form" data-success-text="Thanks – message sent!">
+    <form id="quick-feedback" class="feedback-form emoji-form" data-success-text="Kiitos – viesti perillä!">
       <div class="emoji-option-grid">
         <label class="emoji-option">
           <input type="radio" name="rating" value="3" required>
           <span class="emoji-option__icon">😋</span>
-          <span class="emoji-option__text">Great</span>
+          <span class="emoji-option__text">Erinomainen</span>
         </label>
         <label class="emoji-option">
           <input type="radio" name="rating" value="2" required>
           <span class="emoji-option__icon">🙂</span>
-          <span class="emoji-option__text">Okay</span>
+          <span class="emoji-option__text">Ihan hyvä</span>
         </label>
         <label class="emoji-option">
           <input type="radio" name="rating" value="1" required>
           <span class="emoji-option__icon">😕</span>
-          <span class="emoji-option__text">Not good</span>
+          <span class="emoji-option__text">Ei hyvä</span>
         </label>
       </div>
       <p id="status" class="feedback-status" hidden></p>
@@ -112,7 +113,7 @@
         if (!data.ok) {
           throw new Error(data.error || "Request failed");
         }
-        statusEl.textContent = successText || "Got it – thanks!";
+        statusEl.textContent = successText || "Selvä – kiitos!";
         statusEl.hidden = false;
         statusEl.classList.remove("is-error");
         resetGuard = true;
@@ -126,7 +127,7 @@
         }, 3200);
       } catch (error) {
         console.error(error);
-        statusEl.textContent = "Network hiccup – please try again.";
+        statusEl.textContent = "Yhteys takkuaa – yritä uudelleen.";
         statusEl.hidden = false;
         statusEl.classList.add("is-error");
       } finally {
