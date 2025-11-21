@@ -407,13 +407,13 @@ body {
   gap: 8px;
   padding: 8px 18px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.78);
-  color: #f8fafc;
+  background: linear-gradient(120deg, rgba(248, 250, 252, 0.95), rgba(224, 231, 255, 0.9));
+  color: #0f172a;
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.35);
-  backdrop-filter: blur(12px);
+  box-shadow: 0 16px 32px rgba(148, 163, 184, 0.35);
+  border: 1px solid rgba(148, 163, 184, 0.35);
 }
 
 .app-logo .logo-icon {
